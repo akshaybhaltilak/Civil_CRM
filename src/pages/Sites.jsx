@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { realtimeDb } from "../firebase/firebaseConfig";
 import { ref, push, onValue, remove, update } from "firebase/database";
-import { FaUserPlus, FaTrash, FaMoneyCheckAlt, FaWhatsapp, FaEdit, FaCheck } from "react-icons/fa";
+import { FaUserPlus, FaTrash, FaMoneyCheckAlt, FaWhatsapp, FaEdit, FaCheck, FaFilter, FaFileExport, FaPrint } from "react-icons/fa";
 import { useParams } from "react-router-dom";
 import { toast } from "react-toastify";
 
@@ -16,12 +16,14 @@ const Clients = () => {
     received: "",
     pending: "",
     paymentType: "Cash",
+    joinDate: new Date().toISOString().split('T')[0],
   });
   const [loading, setLoading] = useState(true);
   const [editMode, setEditMode] = useState(false);
   const [editId, setEditId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
-  const [sortConfig, setSortConfig] = useState({ key: null, direction: 'ascending' });
+  const [sortConfig, setSortConfig] = useState({ key: "name", direction: 'ascending' });
+  const [filterStatus, setFilterStatus] = useState("all");
 
   useEffect(() => {
     if (!id) return;
@@ -66,6 +68,7 @@ const Clients = () => {
     const budget = parseFloat(clientData.budget);
     const received = parseFloat(clientData.received);
     const pending = budget - received;
+    const status = pending <= 0 ? "paid" : "pending";
 
     try {
       const clientsRef = ref(realtimeDb, `projects/${id}/clients`);
@@ -76,6 +79,8 @@ const Clients = () => {
           budget,
           received,
           pending,
+          status,
+          lastUpdated: new Date().toISOString(),
         });
         toast.success("Client updated successfully!");
         setEditMode(false);
@@ -86,22 +91,32 @@ const Clients = () => {
           budget,
           received,
           pending,
+          status,
+          joinDate: clientData.joinDate || new Date().toISOString().split('T')[0],
+          createdAt: new Date().toISOString(),
         });
         toast.success("New client added successfully!");
       }
 
-      setClientData({
-        name: "",
-        address: "",
-        contact: "",
-        budget: "",
-        received: "",
-        pending: "",
-        paymentType: "Cash",
-      });
+      resetForm();
     } catch (error) {
       toast.error("Error: " + error.message);
     }
+  };
+
+  const resetForm = () => {
+    setClientData({
+      name: "",
+      address: "",
+      contact: "",
+      budget: "",
+      received: "",
+      pending: "",
+      paymentType: "Cash",
+      joinDate: new Date().toISOString().split('T')[0],
+    });
+    setEditMode(false);
+    setEditId(null);
   };
 
   const handleEditClient = (client) => {
@@ -113,24 +128,11 @@ const Clients = () => {
       received: client.received,
       pending: client.pending,
       paymentType: client.paymentType || "Cash",
+      joinDate: client.joinDate || new Date().toISOString().split('T')[0],
     });
     setEditMode(true);
     setEditId(client.id);
     window.scrollTo({ top: 0, behavior: "smooth" });
-  };
-
-  const handleCancelEdit = () => {
-    setClientData({
-      name: "",
-      address: "",
-      contact: "",
-      budget: "",
-      received: "",
-      pending: "",
-      paymentType: "Cash",
-    });
-    setEditMode(false);
-    setEditId(null);
   };
 
   const handleDeleteClient = async (clientId, clientName) => {
@@ -158,11 +160,80 @@ const Clients = () => {
     setSortConfig({ key, direction });
   };
 
-  const sortedClients = [...clients].filter(client => 
-    client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    client.contact.includes(searchTerm)
-  );
+  const exportToCSV = () => {
+    const headers = ["Name", "Address", "Contact", "Budget", "Received", "Pending", "Payment Type", "Join Date"];
+    const csvData = [headers.join(",")];
+    
+    filteredClients.forEach(client => {
+      const row = [
+        client.name,
+        client.address || "",
+        client.contact,
+        client.budget,
+        client.received,
+        client.pending,
+        client.paymentType || "Cash",
+        client.joinDate || "",
+      ].map(item => `"${item}"`).join(",");
+      
+      csvData.push(row);
+    });
+    
+    const csvString = csvData.join("\n");
+    const blob = new Blob([csvString], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `clients_${new Date().toISOString().split('T')[0]}.csv`);
+    link.style.visibility = "hidden";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
+  const printClientList = () => {
+    const printContent = document.getElementById("client-table").outerHTML;
+    const originalContent = document.body.innerHTML;
+    const printWindow = window.open("", "_blank");
+    
+    printWindow.document.open();
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Client List</title>
+          <style>
+            body { font-family: Arial, sans-serif; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+            th { background-color: #f2f2f2; }
+          </style>
+        </head>
+        <body>
+          <h1>Client List - ${new Date().toLocaleDateString()}</h1>
+          ${printContent}
+        </body>
+      </html>
+    `);
+    
+    printWindow.document.close();
+    printWindow.print();
+  };
+
+  // Filter clients based on search term and payment status
+  const filteredClients = clients.filter(client => {
+    const matchesSearch = 
+      client.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      client.contact.includes(searchTerm);
+    
+    if (filterStatus === "all") return matchesSearch;
+    if (filterStatus === "paid") return matchesSearch && parseFloat(client.pending) <= 0;
+    if (filterStatus === "pending") return matchesSearch && parseFloat(client.pending) > 0;
+    
+    return matchesSearch;
+  });
+
+  // Sort filtered clients
+  const sortedClients = [...filteredClients];
   if (sortConfig.key) {
     sortedClients.sort((a, b) => {
       if (a[sortConfig.key] < b[sortConfig.key]) {
@@ -175,63 +246,65 @@ const Clients = () => {
     });
   }
 
+  // Calculate totals
   const totalBudget = clients.reduce((sum, client) => sum + parseFloat(client.budget || 0), 0);
   const totalReceived = clients.reduce((sum, client) => sum + parseFloat(client.received || 0), 0);
   const totalPending = clients.reduce((sum, client) => sum + parseFloat(client.pending || 0), 0);
+  const paymentProgress = totalBudget > 0 ? (totalReceived / totalBudget) * 100 : 0;
 
   return (
-    <div className="p-6 max-w-6xl mx-auto bg-white dark:bg-gray-900 shadow-xl rounded-xl">
-      <h2 className="text-3xl font-extrabold text-gray-800 dark:text-gray-100 mb-8 text-center flex items-center justify-center gap-3">
-        <FaMoneyCheckAlt className="text-green-500" /> 
+    <div className="p-6 max-w-7xl mx-auto bg-white shadow-xl rounded-xl text-black">
+      <h2 className="text-3xl font-extrabold text-blue-800 mb-8 text-center flex items-center justify-center gap-3">
+        <FaMoneyCheckAlt className="text-blue-600" /> 
         <span>Client Management</span>
       </h2>
 
       {/* Client Form */}
-      <div className="bg-gray-50 dark:bg-gray-800 p-6 rounded-lg shadow-md mb-8">
-        <h3 className="text-xl font-bold mb-4 text-gray-700 dark:text-gray-200">
+      <div className="bg-blue-50 p-6 rounded-lg shadow-md mb-8 border border-blue-100">
+        <h3 className="text-xl font-bold mb-4 text-blue-700">
           {editMode ? "Edit Client" : "Add New Client"}
         </h3>
         
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Client Name *</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Client Name *</label>
             <input
               type="text"
               placeholder="Enter full name"
               value={clientData.name}
               onChange={(e) => setClientData({ ...clientData, name: e.target.value })}
-              className="w-full p-3 border rounded-lg shadow-sm dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 outline-none"
+              className="w-full p-3 border rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 outline-none"
             />
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Address</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
             <input
               type="text"
               placeholder="Street, City, etc."
               value={clientData.address}
               onChange={(e) => setClientData({ ...clientData, address: e.target.value })}
-              className="w-full p-3 border rounded-lg shadow-sm dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 outline-none"
+              className="w-full p-3 border rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 outline-none"
             />
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Contact Number *</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Contact Number *</label>
             <input
               type="text"
               placeholder="+91 or 10-digit number"
               value={clientData.contact}
               onChange={(e) => setClientData({ ...clientData, contact: e.target.value })}
-              className="w-full p-3 border rounded-lg shadow-sm dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 outline-none"
+              className="w-full p-3 border rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 outline-none"
             />
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Payment Type</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Payment Type</label>
             <select
               value={clientData.paymentType}
               onChange={(e) => setClientData({ ...clientData, paymentType: e.target.value })}
-              className="w-full p-3 border rounded-lg shadow-sm dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 outline-none"
+              className="w-full p-3 border rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 outline-none"
             >
               <option value="Cash">Cash</option>
               <option value="Bank Transfer">Bank Transfer</option>
@@ -242,24 +315,34 @@ const Clients = () => {
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Total Budget (₹) *</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Total Budget (₹) *</label>
             <input
               type="number"
               placeholder="Enter amount"
               value={clientData.budget}
               onChange={(e) => setClientData({ ...clientData, budget: e.target.value })}
-              className="w-full p-3 border rounded-lg shadow-sm dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 outline-none"
+              className="w-full p-3 border rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 outline-none"
             />
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Received Amount (₹)</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Received Amount (₹)</label>
             <input
               type="number"
               placeholder="Enter amount"
               value={clientData.received}
               onChange={(e) => setClientData({ ...clientData, received: e.target.value || 0 })}
-              className="w-full p-3 border rounded-lg shadow-sm dark:bg-gray-700 dark:text-white focus:ring-2 focus:ring-green-500 outline-none"
+              className="w-full p-3 border rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 outline-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Join Date</label>
+            <input
+              type="date"
+              value={clientData.joinDate}
+              onChange={(e) => setClientData({ ...clientData, joinDate: e.target.value })}
+              className="w-full p-3 border rounded-lg shadow-sm focus:ring-2 focus:ring-blue-500 outline-none"
             />
           </div>
         </div>
@@ -268,7 +351,7 @@ const Clients = () => {
           <button
             onClick={handleAddClient}
             className={`px-6 py-3 rounded-lg text-white font-medium transition flex items-center justify-center gap-2 ${
-              editMode ? "bg-blue-600 hover:bg-blue-700" : "bg-green-600 hover:bg-green-700"
+              editMode ? "bg-blue-600 hover:bg-blue-700" : "bg-blue-500 hover:bg-blue-600"
             }`}
           >
             {editMode ? (
@@ -284,7 +367,7 @@ const Clients = () => {
           
           {editMode && (
             <button
-              onClick={handleCancelEdit}
+              onClick={resetForm}
               className="px-6 py-3 rounded-lg bg-gray-500 text-white font-medium transition hover:bg-gray-600"
             >
               Cancel
@@ -295,55 +378,89 @@ const Clients = () => {
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <div className="bg-green-50 dark:bg-green-900/20 p-4 rounded-lg shadow-md border-l-4 border-green-500">
-          <h3 className="text-sm uppercase font-bold text-green-700 dark:text-green-400">Total Budget</h3>
-          <p className="text-2xl font-bold text-green-800 dark:text-green-300">₹{totalBudget.toLocaleString()}</p>
+        <div className="bg-blue-50 p-4 rounded-lg shadow-md border-l-4 border-blue-500">
+          <h3 className="text-sm uppercase font-bold text-blue-700">Total Budget</h3>
+          <p className="text-2xl font-bold text-blue-800">₹{totalBudget.toLocaleString()}</p>
         </div>
         
-        <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg shadow-md border-l-4 border-blue-500">
-          <h3 className="text-sm uppercase font-bold text-blue-700 dark:text-blue-400">Total Received</h3>
-          <p className="text-2xl font-bold text-blue-800 dark:text-blue-300">₹{totalReceived.toLocaleString()}</p>
+        <div className="bg-green-50 p-4 rounded-lg shadow-md border-l-4 border-green-500">
+          <h3 className="text-sm uppercase font-bold text-green-700">Total Received</h3>
+          <p className="text-2xl font-bold text-green-800">₹{totalReceived.toLocaleString()}</p>
         </div>
         
-        <div className="bg-amber-50 dark:bg-amber-900/20 p-4 rounded-lg shadow-md border-l-4 border-amber-500">
-          <h3 className="text-sm uppercase font-bold text-amber-700 dark:text-amber-400">Total Pending</h3>
-          <p className="text-2xl font-bold text-amber-800 dark:text-amber-300">₹{totalPending.toLocaleString()}</p>
+        <div className="bg-amber-50 p-4 rounded-lg shadow-md border-l-4 border-amber-500">
+          <h3 className="text-sm uppercase font-bold text-amber-700">Total Pending</h3>
+          <p className="text-2xl font-bold text-amber-800">₹{totalPending.toLocaleString()}</p>
+        </div>
+      </div>
+
+      {/* Progress Bar */}
+      <div className="mb-8 bg-gray-100 p-4 rounded-lg shadow">
+        <div className="flex justify-between mb-2">
+          <span className="text-sm font-medium text-blue-700">Payment Progress</span>
+          <span className="text-sm font-medium text-blue-700">{paymentProgress.toFixed(1)}%</span>
+        </div>
+        <div className="w-full bg-gray-200 rounded-full h-2.5">
+          <div 
+            className="bg-blue-600 h-2.5 rounded-full" 
+            style={{ width: `${paymentProgress}%` }}
+          ></div>
         </div>
       </div>
 
       {/* Client Table */}
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md overflow-hidden">
-        <div className="p-4 bg-gray-50 dark:bg-gray-700 flex flex-col sm:flex-row justify-between items-center gap-4">
-          <h3 className="text-lg font-bold text-gray-700 dark:text-gray-200">
+      <div className="bg-white rounded-lg shadow-md overflow-hidden border border-gray-200">
+        <div className="p-4 bg-blue-50 flex flex-col sm:flex-row justify-between items-center gap-4">
+          <h3 className="text-lg font-bold text-blue-700">
             Client List ({clients.length})
           </h3>
           
-          <div className="relative w-full sm:w-64">
-            <input
-              type="text"
-              placeholder="Search clients..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 rounded-lg border dark:bg-gray-600 dark:text-white outline-none focus:ring-2 focus:ring-green-500"
-            />
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <svg className="h-5 w-5 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
-                <path fillRule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clipRule="evenodd" />
-              </svg>
+          <div className="flex flex-wrap gap-3 items-center">
+            <div className="relative">
+              <input
+                type="text"
+                placeholder="Search clients..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="pl-10 pr-4 py-2 rounded-lg border outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <svg className="h-5 w-5 text-gray-400" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clipRule="evenodd" />
+                </svg>
+              </div>
             </div>
+
+            <select
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value)}
+              className="p-2 rounded-lg border outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="all">All Clients</option>
+              <option value="paid">Fully Paid</option>
+              <option value="pending">Payment Pending</option>
+            </select>
+
+            <button onClick={exportToCSV} className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg" title="Export to CSV">
+              <FaFileExport />
+            </button>
+
+            <button onClick={printClientList} className="p-2 text-blue-600 hover:bg-blue-100 rounded-lg" title="Print Client List">
+              <FaPrint />
+            </button>
           </div>
         </div>
 
         {loading ? (
           <div className="flex justify-center items-center p-8">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-500"></div>
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            {clients.length > 0 ? (
+          <div className="overflow-x-auto" id="client-table">
+            {sortedClients.length > 0 ? (
               <table className="w-full border-collapse">
                 <thead>
-                  <tr className="bg-gray-100 dark:bg-gray-700 text-left text-gray-700 dark:text-gray-300 text-sm">
+                  <tr className="bg-gray-100 text-left text-gray-700 text-sm">
                     <th className="p-4 cursor-pointer" onClick={() => handleSort('name')}>
                       <div className="flex items-center gap-1">
                         Name
@@ -352,7 +469,6 @@ const Clients = () => {
                         )}
                       </div>
                     </th>
-                    <th className="p-4">Address</th>
                     <th className="p-4">Contact</th>
                     <th className="p-4 cursor-pointer" onClick={() => handleSort('budget')}>
                       <div className="flex items-center gap-1">
@@ -371,6 +487,7 @@ const Clients = () => {
                         )}
                       </div>
                     </th>
+                    <th className="p-4">Status</th>
                     <th className="p-4">Payment</th>
                     <th className="p-4 text-center">Actions</th>
                   </tr>
@@ -379,18 +496,26 @@ const Clients = () => {
                   {sortedClients.map((client) => (
                     <tr 
                       key={client.id} 
-                      className="border-t border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-750"
+                      className="border-t border-gray-200 hover:bg-blue-50"
                     >
-                      <td className="p-4 font-medium text-gray-800 dark:text-gray-200">{client.name}</td>
-                      <td className="p-4 text-gray-600 dark:text-gray-400">{client.address || "—"}</td>
-                      <td className="p-4 text-gray-600 dark:text-gray-400">{client.contact}</td>
+                      <td className="p-4 font-medium text-blue-800">{client.name}</td>
+                      <td className="p-4 text-gray-600">{client.contact}</td>
                       <td className="p-4 font-medium">₹{parseFloat(client.budget).toLocaleString()}</td>
-                      <td className="p-4 text-blue-600 dark:text-blue-400">₹{parseFloat(client.received).toLocaleString()}</td>
-                      <td className={`p-4 font-medium ${parseFloat(client.pending) > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400'}`}>
+                      <td className="p-4 text-blue-600">₹{parseFloat(client.received).toLocaleString()}</td>
+                      <td className={`p-4 font-medium ${parseFloat(client.pending) > 0 ? 'text-amber-600' : 'text-green-600'}`}>
                         ₹{parseFloat(client.pending).toLocaleString()}
                       </td>
                       <td className="p-4">
-                        <span className="px-2 py-1 text-xs rounded-full bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200">
+                        <span className={`px-2 py-1 text-xs rounded-full ${
+                          parseFloat(client.pending) <= 0 
+                            ? 'bg-green-100 text-green-800' 
+                            : 'bg-amber-100 text-amber-800'
+                        }`}>
+                          {parseFloat(client.pending) <= 0 ? 'Paid' : 'Pending'}
+                        </span>
+                      </td>
+                      <td className="p-4">
+                        <span className="px-2 py-1 text-xs rounded-full bg-gray-100 text-gray-800">
                           {client.paymentType || "Cash"}
                         </span>
                       </td>
@@ -399,23 +524,25 @@ const Clients = () => {
                           <button 
                             onClick={() => handleEditClient(client)} 
                             title="Edit Client"
-                            className="p-2 text-blue-500 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-full"
+                            className="p-2 text-blue-500 hover:text-blue-700 hover:bg-blue-50 rounded-full"
                           >
                             <FaEdit />
                           </button>
                           
-                          <button 
-                            onClick={() => sendWhatsAppReminder(client)} 
-                            title="Send WhatsApp Payment Reminder"
-                            className="p-2 text-green-500 hover:text-green-700 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-full"
-                          >
-                            <FaWhatsapp />
-                          </button>
+                          {parseFloat(client.pending) > 0 && (
+                            <button 
+                              onClick={() => sendWhatsAppReminder(client)} 
+                              title="Send WhatsApp Payment Reminder"
+                              className="p-2 text-green-500 hover:text-green-700 hover:bg-green-50 rounded-full"
+                            >
+                              <FaWhatsapp />
+                            </button>
+                          )}
                           
                           <button 
                             onClick={() => handleDeleteClient(client.id, client.name)} 
                             title="Delete Client"
-                            className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full"
+                            className="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-full"
                           >
                             <FaTrash />
                           </button>
@@ -426,7 +553,7 @@ const Clients = () => {
                 </tbody>
               </table>
             ) : (
-              <div className="p-8 text-center text-gray-500 dark:text-gray-400">
+              <div className="p-8 text-center text-gray-500">
                 <p>No clients found. Add your first client to get started.</p>
               </div>
             )}
